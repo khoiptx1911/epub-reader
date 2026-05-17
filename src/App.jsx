@@ -25,6 +25,7 @@ function App() {
   const [toc, setToc]                 = useState([]);
   const [tocOpen, setTocOpen]         = useState(true);
   const [expandedItems, setExpandedItems] = useState({});
+  const [currentHref, setCurrentHref] = useState(null);
 
   const renditionRef = useRef(null);
   const bookRef      = useRef(null);
@@ -332,12 +333,23 @@ function App() {
 
   const renderTocItems = (items, level = 0, parentKey = '') => {
     if (!items || !items.length) return null;
+
+    const normalizeHref = (h) => {
+      if (!h) return null;
+      try { return String(h).split('#')[0].split('/').pop(); } catch { return String(h); }
+    };
+    const curBase = normalizeHref(currentHref);
+
     return items.map((item, idx) => {
       const children = getChildren(item) || [];
       const itemKey = `${parentKey}-${idx}`;
       const isExpanded = expandedItems[itemKey];
       const label = (item.label && (item.label.text || item.label)) || item.title || item.text || item.href || item.id || 'Untitled';
       const hasChildren = children.length > 0 && level < 3;
+
+      const itemHrefRaw = item.href || item.id || item.link || item.target || '';
+      const itemBase = normalizeHref(itemHrefRaw);
+      const isCurrent = curBase && itemBase && (curBase === itemBase || curBase.includes(itemBase) || itemBase.includes(curBase));
 
       return (
         <li key={itemKey} style={{ marginBottom: '6px', paddingLeft: `${Math.min(level, 3) * 32}px` }}>
@@ -361,14 +373,15 @@ function App() {
             <button
               onClick={() => renditionRef.current && renditionRef.current.display(item.href || item.id || item.link || item.target)}
               style={{
-                background: 'none',
+                background: isCurrent ? 'rgba(22,163,74,0.14)' : 'transparent',
                 border: 'none',
-                padding: 0,
+                padding: isCurrent ? '6px 8px' : 0,
                 textAlign: 'left',
                 color: c.tocText,
                 cursor: 'pointer',
                 fontSize: '0.9rem',
                 flex: 1,
+                borderRadius: isCurrent ? '6px' : undefined,
               }}
             >
               {label}
@@ -589,6 +602,10 @@ function App() {
         // Reset scroll to top khi chuyển chapter
         if (viewerRef.current) viewerRef.current.scrollTop = 0;
         lastLocationRef.current = location;
+        try {
+          const href = (location && (location.start && location.start.href)) || location?.href || null;
+          if (href) setCurrentHref(href);
+        } catch (_) {}
       });
 
       // Try restore saved position: use local immediately, then try Drive and override if newer
@@ -714,7 +731,6 @@ function App() {
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
           {currentBook && <>
-            <button style={btn} onClick={() => setTocOpen(s => !s)}>{tocOpen ? '⇤ TOC' : '☰ TOC'}</button>
             <button style={btn} onClick={() => changeFontSize(-10)}>A−</button>
             <span style={{ color: c.sub, fontSize: '0.76rem', minWidth: '32px', textAlign: 'center' }}>{fontSize}%</span>
             <button style={btn} onClick={() => changeFontSize(10)}>A+</button>
@@ -809,7 +825,7 @@ function App() {
                 overflowY: 'auto',
                 padding: '12px',
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <div style={{ position: 'sticky', top: 0, zIndex: 1000, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 6px', borderBottom: `1px solid ${c.border}`, background: c.surface }}>
                   <div style={{ fontSize: '0.86rem', fontWeight: 600, color: c.tocText }}>Mục lục</div>
                   <button style={{ ...btn, padding: '4px 8px' }} onClick={() => setTocOpen(false)}>✖</button>
                 </div>
