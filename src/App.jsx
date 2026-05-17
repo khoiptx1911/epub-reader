@@ -732,7 +732,7 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
           {currentBook && <>
             <button style={btn} onClick={() => changeFontSize(-10)}>A−</button>
-            <span style={{ color: c.sub, fontSize: '0.76rem', minWidth: '32px', textAlign: 'center' }}>{fontSize}%</span>
+
             <button style={btn} onClick={() => changeFontSize(10)}>A+</button>
             <button style={btn} onClick={goBack}>← Thư viện</button>
           </>}
@@ -823,9 +823,10 @@ function App() {
                 borderRight: `1px solid ${c.border}`,
                 backgroundColor: c.surface,
                 overflowY: 'auto',
-                padding: '12px',
+                padding: 0,
+                boxSizing: 'border-box',
               }}>
-                <div style={{ position: 'sticky', top: 0, zIndex: 1000, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 6px', borderBottom: `1px solid ${c.border}`, background: c.surface }}>
+                <div style={{ position: 'sticky', top: 0, zIndex: 1000, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: `1px solid ${c.border}`, background: c.surface }}>
                   <div style={{ fontSize: '0.86rem', fontWeight: 600, color: c.tocText }}>Mục lục</div>
                   <button style={{ ...btn, padding: '4px 8px' }} onClick={() => setTocOpen(false)}>✖</button>
                 </div>
