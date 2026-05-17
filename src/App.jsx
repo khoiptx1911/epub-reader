@@ -79,11 +79,12 @@ function App() {
       }
       const listJson = await listRes.json();
       console.debug('[epub] savePositionToDrive listJson', listJson);
-      const metadata = { name, parents: ['appDataFolder'], mimeType: 'application/json' };
       const boundary = '-------314159265358979323846';
-      const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(pos)}\r\n--${boundary}--`;
       if (listJson.files && listJson.files.length) {
         const fid = listJson.files[0].id;
+        // For updates, do NOT include parents in metadata (not writable on update)
+        const metadata = { name, mimeType: 'application/json' };
+        const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(pos)}\r\n--${boundary}--`;
         const upd = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fid}?uploadType=multipart&spaces=appDataFolder`, {
           method: 'PATCH',
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
@@ -92,10 +93,26 @@ function App() {
         if (!upd.ok) {
           const t = await upd.text();
           console.warn('[epub] savePositionToDrive update failed', upd.status, t);
+          // Fallback: attempt simple media update (replace content only)
+          try {
+            const fallback = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fid}?uploadType=media&spaces=appDataFolder`, {
+              method: 'PATCH',
+              headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(pos),
+            });
+            if (!fallback.ok) {
+              const ft = await fallback.text().catch(() => null);
+              console.warn('[epub] savePositionToDrive fallback failed', fallback.status, ft);
+            } else {
+              console.debug('[epub] savePositionToDrive fallback media update ok', fid);
+            }
+          } catch (e) { console.warn('[epub] savePositionToDrive fallback err', e); }
         } else {
           console.debug('[epub] savePositionToDrive updated', fid);
         }
       } else {
+        const metadata = { name, parents: ['appDataFolder'], mimeType: 'application/json' };
+        const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(pos)}\r\n--${boundary}--`;
         const created = await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&spaces=appDataFolder`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
@@ -378,6 +395,8 @@ function App() {
       /* --- style iframe element --- */
       const iframe = view.iframe;
       if (iframe) {
+        try { iframe.sandbox = 'allow-same-origin allow-scripts'; } catch (_) {}
+        try { iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts'); } catch (_) {}
         iframe.style.border      = 'none';
         iframe.style.outline     = 'none';
         iframe.style.display     = 'block';
