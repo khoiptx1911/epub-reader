@@ -6,9 +6,10 @@ import { CLIENT_ID } from './config';
 
 const globalStyle = document.createElement('style');
 globalStyle.textContent = `
-  @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;600;700&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body, #root { width: 100%; height: 100%; overflow: hidden; font-family: 'Be Vietnam Pro', sans-serif; }
+  html, body, #root { width: 100%; height: 100%; overflow: hidden; font-family: 'Nunito Sans', sans-serif; }
+  * { font-family: 'Nunito Sans', sans-serif !important; }
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
@@ -330,7 +331,14 @@ function App() {
 
   const normalizeHref = (h) => {
     if (!h) return null;
-    try { return String(h).split('#')[0].split('/').pop(); } catch { return String(h); }
+    try {
+      let s = String(h).split('#')[0].split('?')[0];
+      s = decodeURIComponent(s);
+      const parts = s.split('/');
+      let name = parts[parts.length - 1] || s;
+      name = name.replace(/\.(x?html|html|xhtml|htm|ncx|xml)$/i, '');
+      return name.toLowerCase();
+    } catch { return String(h).toLowerCase(); }
   };
 
   const findPathToHref = (items, targetBase, parentKey = '') => {
@@ -357,6 +365,7 @@ function App() {
       if (!tocRef?.current || !key) return;
       const el = tocRef.current.querySelector(`[data-key="${key}"]`);
       if (el && typeof el.scrollIntoView === 'function') {
+        console.debug('[epub] scrollToKey', key, el);
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     } catch (e) { }
@@ -461,6 +470,7 @@ function App() {
       if (!toc || !toc.length) { setCurrentPath([]); return; }
       const targetBase = normalizeHref(currentHref);
       const path = findPathToHref(toc, targetBase) || [];
+      console.debug('[epub] computePath', { targetBase, path, tocLen: toc?.length });
       setCurrentPath(path);
     } catch (e) { setCurrentPath([]); }
   }, [toc, currentHref]);
@@ -518,7 +528,7 @@ function App() {
       const s = doc.createElement('style');
       s.id = '__t__';
       s.textContent = `
-        @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;600;700&display=swap');
         html {
           background: ${bg} !important;
           overflow: hidden !important;   /* iframe không tự cuộn */
@@ -527,7 +537,7 @@ function App() {
         body {
           background: ${bg} !important;
           color: ${color} !important;
-          font-family: 'Be Vietnam Pro', sans-serif !important;
+          font-family: 'Nunito Sans', sans-serif !important;
           font-size: ${size}% !important;
           line-height: 1.85 !important;
           max-width: 1080px !important;
@@ -699,6 +709,7 @@ function App() {
             try {
               const targetBase = normalizeHref(href);
               const path = findPathToHref(toc, targetBase) || [];
+              console.debug('[epub] relocated href', href, '-> path', path, 'tocLen', toc?.length);
               if (path && path.length) {
                 setCurrentPath(path);
                 // expand ancestors so the active item is visible
