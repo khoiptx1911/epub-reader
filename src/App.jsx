@@ -6,9 +6,9 @@ import { CLIENT_ID } from './config';
 
 const globalStyle = document.createElement('style');
 globalStyle.textContent = `
-  @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;600;700&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+  html, body, #root { width: 100%; height: 100%; overflow: hidden; font-family: 'Be Vietnam Pro', sans-serif; }
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
@@ -26,6 +26,7 @@ function App() {
   const [tocOpen, setTocOpen]         = useState(true);
   const [expandedItems, setExpandedItems] = useState({});
   const [currentHref, setCurrentHref] = useState(null);
+  const [currentPath, setCurrentPath] = useState([]);
 
   const renditionRef = useRef(null);
   const bookRef      = useRef(null);
@@ -327,18 +328,65 @@ function App() {
 
   const getChildren = (item) => item.subitems || item.children || item.items || item.nav || [];
 
+  const normalizeHref = (h) => {
+    if (!h) return null;
+    try { return String(h).split('#')[0].split('/').pop(); } catch { return String(h); }
+  };
+
+  const findPathToHref = (items, targetBase, parentKey = '') => {
+    if (!items || !items.length || !targetBase) return null;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const itemKey = `${parentKey}-${i}`;
+      const itemHrefRaw = item.href || item.id || item.link || item.target || '';
+      const itemBase = normalizeHref(itemHrefRaw);
+      if (itemBase && (itemBase === targetBase || targetBase.includes(itemBase) || itemBase.includes(targetBase))) {
+        return [itemKey];
+      }
+      const children = getChildren(item) || [];
+      const sub = findPathToHref(children, targetBase, itemKey);
+      if (sub) return [itemKey, ...sub];
+    }
+    return null;
+  };
+
+  const tocRef = useRef(null);
+
+  const scrollToKey = (key) => {
+    try {
+      if (!tocRef?.current || !key) return;
+      const el = tocRef.current.querySelector(`[data-key="${key}"]`);
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } catch (e) { }
+  };
+
   const toggleExpand = (key) => {
-    setExpandedItems(prev => ({ ...prev, [key]: !prev[key] }));
+    setExpandedItems(prev => {
+      const opening = !prev[key];
+      const next = { ...prev, [key]: !prev[key] };
+      // schedule scroll if opening and current path is descendant
+      setTimeout(() => {
+        try {
+          if (opening && Array.isArray(currentPath) && currentPath.length) {
+            if (currentPath.some(k => k.startsWith(key))) {
+              const leaf = currentPath[currentPath.length - 1];
+              scrollToKey(leaf);
+            }
+          }
+        } catch (_) {}
+      }, 90);
+      return next;
+    });
   };
 
   const renderTocItems = (items, level = 0, parentKey = '') => {
     if (!items || !items.length) return null;
 
-    const normalizeHref = (h) => {
-      if (!h) return null;
-      try { return String(h).split('#')[0].split('/').pop(); } catch { return String(h); }
-    };
     const curBase = normalizeHref(currentHref);
+    const baseIndent = 20;
+    const indentPerLevel = 24;
 
     return items.map((item, idx) => {
       const children = getChildren(item) || [];
@@ -349,11 +397,15 @@ function App() {
 
       const itemHrefRaw = item.href || item.id || item.link || item.target || '';
       const itemBase = normalizeHref(itemHrefRaw);
-      const isCurrent = curBase && itemBase && (curBase === itemBase || curBase.includes(itemBase) || itemBase.includes(curBase));
+      const isActiveLeaf = Array.isArray(currentPath) && currentPath[currentPath.length - 1] === itemKey;
+      const isAncestor = Array.isArray(currentPath) && currentPath.includes(itemKey);
+      const isCurrent = isActiveLeaf || isAncestor || (curBase && itemBase && (curBase === itemBase || curBase.includes(itemBase) || itemBase.includes(curBase)));
+
+      const paddingLeft = `${baseIndent + Math.min(level, 3) * indentPerLevel}px`;
 
       return (
-        <li key={itemKey} style={{ marginBottom: '6px', paddingLeft: `${Math.min(level, 3) * 32}px` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <li key={itemKey} data-key={itemKey} style={{ marginBottom: '6px', paddingLeft }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {hasChildren && (
               <button
                 onClick={() => toggleExpand(itemKey)}
@@ -364,31 +416,37 @@ function App() {
                   cursor: 'pointer',
                   color: c.accent,
                   fontSize: '0.9rem',
-                  width: '16px',
+                  width: '18px',
                 }}
+                aria-expanded={!!isExpanded}
+                aria-controls={`toc-${itemKey}`}
               >
                 {isExpanded ? '▼' : '▶'}
               </button>
             )}
             <button
+              data-key={itemKey}
+              data-active={isActiveLeaf ? '1' : undefined}
               onClick={() => renditionRef.current && renditionRef.current.display(item.href || item.id || item.link || item.target)}
               style={{
-                background: isCurrent ? 'rgba(22,163,74,0.14)' : 'transparent',
+                background: isActiveLeaf ? 'rgba(22,163,74,0.30)' : (isAncestor ? 'rgba(22,163,74,0.18)' : 'transparent'),
                 border: 'none',
-                padding: isCurrent ? '6px 8px' : 0,
+                padding: isActiveLeaf ? '8px 10px' : '6px 8px',
                 textAlign: 'left',
-                color: c.tocText,
+                color: isActiveLeaf || isAncestor ? '#ffffff' : c.tocText,
                 cursor: 'pointer',
                 fontSize: '0.9rem',
                 flex: 1,
-                borderRadius: isCurrent ? '6px' : undefined,
+                borderLeft: isActiveLeaf ? `4px solid ${c.accent}` : (isAncestor ? `3px solid ${c.accent}` : 'none'),
+                borderRadius: isActiveLeaf ? '8px' : (isAncestor ? '6px' : undefined),
+                fontWeight: isActiveLeaf ? 700 : undefined,
               }}
             >
               {label}
             </button>
           </div>
           {hasChildren && isExpanded && (
-            <ul style={{ listStyle: 'none', padding: 0, margin: '6px 0 0' }}>
+            <ul id={`toc-${itemKey}`} style={{ listStyle: 'none', padding: 0, margin: '6px 0 0' }}>
               {renderTocItems(children, level + 1, itemKey)}
             </ul>
           )}
@@ -396,6 +454,37 @@ function App() {
       );
     });
   };
+
+  useEffect(() => {
+    // compute path to current chapter in toc (array of keys)
+    try {
+      if (!toc || !toc.length) { setCurrentPath([]); return; }
+      const targetBase = normalizeHref(currentHref);
+      const path = findPathToHref(toc, targetBase) || [];
+      setCurrentPath(path);
+    } catch (e) { setCurrentPath([]); }
+  }, [toc, currentHref]);
+
+  useEffect(() => {
+    if (!tocOpen) return;
+    if (Array.isArray(currentPath) && currentPath.length) {
+      // expand ancestors so active item is visible
+      setExpandedItems(prev => {
+        const next = { ...prev };
+        for (let i = 0; i < currentPath.length - 1; i++) next[currentPath[i]] = true;
+        return next;
+      });
+      // scroll to leaf
+      setTimeout(() => {
+        try {
+          const leaf = currentPath[currentPath.length - 1] || currentPath[0];
+          scrollToKey(leaf);
+        } catch (_) {}
+      }, 100);
+    } else {
+      if (tocRef?.current) tocRef.current.scrollTop = 0;
+    }
+  }, [tocOpen, currentPath]);
 
   /* ─── Inject style + resize iframe theo nội dung thật ─── */
   const applyStyle = (view, dark, size) => {
@@ -603,8 +692,27 @@ function App() {
         if (viewerRef.current) viewerRef.current.scrollTop = 0;
         lastLocationRef.current = location;
         try {
-          const href = (location && (location.start && location.start.href)) || location?.href || null;
-          if (href) setCurrentHref(href);
+          const loc = (typeof rendition.currentLocation === 'function') ? rendition.currentLocation() : location;
+          const href = (loc && loc.start && loc.start.href) || loc?.href || (location && location.start && location.start.href) || null;
+          if (href) {
+            setCurrentHref(href);
+            try {
+              const targetBase = normalizeHref(href);
+              const path = findPathToHref(toc, targetBase) || [];
+              if (path && path.length) {
+                setCurrentPath(path);
+                // expand ancestors so the active item is visible
+                setExpandedItems(prev => {
+                  const next = { ...prev };
+                  for (let i = 0; i < path.length - 1; i++) next[path[i]] = true;
+                  return next;
+                });
+                if (tocOpen && tocRef?.current) {
+                  setTimeout(() => { try { scrollToKey(path[path.length - 1]); } catch (_) {} }, 120);
+                }
+              }
+            } catch (_) {}
+          }
         } catch (_) {}
       });
 
@@ -641,6 +749,28 @@ function App() {
 
       renditionRef.current = rendition;
       window.__epubRendition__ = rendition;  // global ref cho next button
+
+      // initial highlight/expand TOC based on current location
+      try {
+        const loc = (typeof rendition.currentLocation === 'function') ? rendition.currentLocation() : null;
+        const href = (loc && loc.start && loc.start.href) || loc?.href || null;
+        if (href) {
+          setCurrentHref(href);
+          try {
+            const targetBase = normalizeHref(href);
+            const path = findPathToHref(toc, targetBase) || [];
+            if (path && path.length) {
+              setCurrentPath(path);
+              setExpandedItems(prev => {
+                const next = { ...prev };
+                for (let i = 0; i < path.length - 1; i++) next[path[i]] = true;
+                return next;
+              });
+              setTimeout(() => { try { scrollToKey(path[path.length - 1]); } catch (_) {} }, 120);
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
 
       // Start periodic sync and save initial position
       startPositionSync(fileId);
@@ -725,16 +855,16 @@ function App() {
         padding: '10px 18px', background: c.header,
         borderBottom: `1px solid ${c.border}`, flexShrink: 0,
         display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px',
+        flexWrap: 'nowrap',
+        minHeight: '44px',
       }}>
-        <span onClick={goBack} style={{ cursor: 'pointer', color: c.accent, fontWeight: 700, fontSize: '0.98rem', userSelect: 'none' }}>
+        <span onClick={goBack} style={{ cursor: 'pointer', color: c.accent, fontWeight: 700, fontSize: '0.98rem', userSelect: 'none', flexShrink: 0, whiteSpace: 'nowrap' }}>
           📚 EPUB READER
         </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap', flexShrink: 0 }}>
           {currentBook && <>
             <button style={btn} onClick={() => changeFontSize(-10)}>A−</button>
-
             <button style={btn} onClick={() => changeFontSize(10)}>A+</button>
-            <button style={btn} onClick={goBack}>← Thư viện</button>
           </>}
         </div>
       </div>
@@ -814,7 +944,7 @@ function App() {
               }}
             />
             {tocOpen && (
-              <div style={{
+              <div ref={tocRef} style={{
                 position: 'absolute',
                 left: 0,
                 top: 0,
