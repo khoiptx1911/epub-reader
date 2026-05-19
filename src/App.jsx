@@ -28,6 +28,10 @@ function App() {
   const [expandedItems, setExpandedItems] = useState({});
   const [currentHref, setCurrentHref] = useState(null);
   const [currentPath, setCurrentPath] = useState([]);
+  const [folderTree, setFolderTree] = useState(null);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [folderExpanded, setFolderExpanded] = useState({});
+  const [currentFolderPath, setCurrentFolderPath] = useState([]);
 
   const renditionRef = useRef(null);
   const bookRef      = useRef(null);
@@ -288,16 +292,62 @@ function App() {
   /* ─── Lấy danh sách sách ─── */
   const fetchFiles = async () => {
     if (!accessToken) return;
+    setLibraryLoading(true);
     setLoading(true);
     try {
       const h = { headers: { Authorization: `Bearer ${accessToken}` } };
-      const d = await (await fetch(`https://www.googleapis.com/drive/v3/files?q=name='data' and 'root' in parents and mimeType='application/vnd.google-apps.folder'`, h)).json();
-      if (!d.files?.length) { setLoading(false); return; }
-      const e = await (await fetch(`https://www.googleapis.com/drive/v3/files?q=name='epub' and '${d.files[0].id}' in parents`, h)).json();
-      if (!e.files?.length) { setLoading(false); return; }
-      const f = await (await fetch(`https://www.googleapis.com/drive/v3/files?q='${e.files[0].id}' in parents and name contains '.epub'`, h)).json();
-      setFiles(f.files || []);
+      // find data/epub folder (same logic as before)
+      const dRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='data' and 'root' in parents and mimeType='application/vnd.google-apps.folder'`, h);
+      const d = await dRes.json();
+      if (!d.files?.length) { setFolderTree(null); setLibraryLoading(false); setLoading(false); return; }
+      const eRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='epub' and '${d.files[0].id}' in parents and trashed=false`, h);
+      const e = await eRes.json();
+      if (!e.files?.length) { setFolderTree(null); setLibraryLoading(false); setLoading(false); return; }
+      const epubFolder = e.files[0];
+
+      const listChildren = async (parentId, pageToken = null) => {
+        const q = `'${parentId}' in parents and trashed=false`;
+        let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,parents)&pageSize=1000`;
+        if (pageToken) url += `&pageToken=${pageToken}`;
+        const res = await fetch(url, h);
+        if (!res.ok) throw new Error('listChildren failed');
+        return await res.json();
+      };
+
+      const buildTree = async (parentId) => {
+        let filesAcc = [];
+        let foldersAcc = [];
+        let nextPage = null;
+        do {
+          const res = await listChildren(parentId, nextPage);
+          const items = res.files || [];
+          for (const it of items) {
+            if (it.mimeType === 'application/vnd.google-apps.folder') {
+              const subtree = await buildTree(it.id);
+              foldersAcc.push({ id: it.id, name: it.name, mimeType: it.mimeType, children: subtree.children, files: subtree.files });
+            } else if ((it.name && it.name.toLowerCase().endsWith('.epub')) || it.mimeType === 'application/epub+zip') {
+              filesAcc.push(it);
+            }
+          }
+          nextPage = res.nextPageToken;
+        } while (nextPage);
+        return { children: foldersAcc, files: filesAcc };
+      };
+
+      const tree = await buildTree(epubFolder.id);
+      setFolderTree({ id: epubFolder.id, name: epubFolder.name || 'epub', children: tree.children, files: tree.files });
+
+      // flat list also for backward compatibility
+      const allFiles = [];
+      const collect = (node) => {
+        if (!node) return;
+        if (node.files) allFiles.push(...node.files);
+        if (node.children) node.children.forEach(collect);
+      };
+      collect(tree);
+      setFiles(allFiles || []);
     } catch (err) { console.error(err); }
+    setLibraryLoading(false);
     setLoading(false);
   };
 
@@ -849,7 +899,133 @@ function App() {
   const btn = {
     background: c.btnBg, color: c.btnText, border: 'none',
     padding: '5px 11px', borderRadius: '6px', cursor: 'pointer',
-    fontSize: '0.82rem', fontFamily: "'Be Vietnam Pro', sans-serif", fontWeight: 500,
+    fontSize: '0.82rem', fontFamily: "'Nunito Sans', sans-serif", fontWeight: 500,
+  };
+
+  // Get current folder based on path
+  const getCurrentFolder = () => {
+    if (!folderTree) return null;
+    let current = folderTree;
+    for (const folderId of currentFolderPath) {
+      if (current.children) {
+        const found = current.children.find(c => c.id === folderId);
+        if (found) current = found;
+        else return current;
+      } else return current;
+    }
+    return current;
+  };
+
+  // Navigate into folder (grid)
+  const enterFolder = (folderId) => {
+    setCurrentFolderPath(prev => [...prev, folderId]);
+  };
+
+  // Go back to parent folder (grid)
+  const exitFolder = () => {
+    setCurrentFolderPath(prev => (prev.length > 0 ? prev.slice(0, -1) : prev));
+  };
+
+  // Render grid layout for library
+  const renderGridLibrary = () => {
+    const currentFolder = getCurrentFolder();
+    if (!currentFolder) return null;
+
+    const items = [];
+    if (currentFolder.children) {
+      items.push(...currentFolder.children.map(folder => ({ type: 'folder', data: folder })));
+    }
+    if (currentFolder.files) {
+      items.push(...currentFolder.files.map(file => ({ type: 'file', data: file })));
+    }
+
+    return (
+      <div>
+        {/* Breadcrumb */}
+        {currentFolderPath.length > 0 && (
+          <div style={{ marginBottom: '14px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button onClick={() => setCurrentFolderPath([])} style={{ ...btn, background: 'transparent', border: `1px solid ${c.border}`, color: c.accent }}>← {folderTree.name}</button>
+            {currentFolderPath.map((folderId, idx) => {
+              const folder = (() => {
+                let current = folderTree;
+                for (let i = 0; i <= idx; i++) {
+                  if (current.children) {
+                    const found = current.children.find(c => c.id === currentFolderPath[i]);
+                    if (found) current = found;
+                  }
+                }
+                return current;
+              })();
+              return (
+                <div key={folderId} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: c.sub }}>/</span>
+                  <span style={{ color: c.accent }}>{folder?.name || '?'}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '16px' }}>
+          {items.map(item => (
+            <div
+              key={item.data.id}
+              onClick={() => {
+                if (item.type === 'folder') {
+                  enterFolder(item.data.id);
+                } else {
+                  openBook(item.data.id);
+                }
+              }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '16px 12px',
+                backgroundColor: c.surface,
+                border: `1px solid ${c.border}`,
+                borderRadius: '10px',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                fontSize: '0.85rem',
+                textAlign: 'center',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = c.border;
+                e.currentTarget.style.transform = 'scale(1.05)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = c.surface;
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
+            >
+              <div style={{ fontSize: '3rem' }}>{item.type === 'folder' ? '📁' : '📖'}</div>
+              <div style={{ fontWeight: 500, wordBreak: 'break-word' }}>
+                {item.type === 'folder' ? item.data.name : item.data.name.replace('.epub', '')}
+              </div>
+              {item.type === 'folder' && item.data.children && (
+                <div style={{ fontSize: '0.75rem', color: c.sub }}>
+                  {item.data.children.length} thư mục
+                </div>
+              )}
+              {item.type === 'folder' && item.data.files && (
+                <div style={{ fontSize: '0.75rem', color: c.sub }}>
+                  {item.data.files.length} sách
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {items.length === 0 && (
+          <div style={{ textAlign: 'center', color: c.sub, padding: '40px 20px' }}>
+            Thư mục trống
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -902,21 +1078,19 @@ function App() {
           </div>
           {loading && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Đang tải...</p>}
           {!loading && files.length === 0 && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Không tìm thấy file .epub trong thư mục data/epub</p>}
-          {files.map(file => (
-            <div key={file.id} onClick={() => openBook(file.id)}
-              style={{
-                padding: '13px 16px', cursor: 'pointer', backgroundColor: c.surface,
-                marginBottom: '7px', borderRadius: '9px', border: `1px solid ${c.border}`,
-                display: 'flex', alignItems: 'center', gap: '11px', transition: 'background 0.15s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.backgroundColor = D ? '#242424' : '#eee8de'}
-              onMouseLeave={e => e.currentTarget.style.backgroundColor = c.surface}
-            >
-              <span style={{ fontSize: '1.3rem' }}>📖</span>
-              <span style={{ flex: 1, fontSize: '0.9rem' }}>{file.name.replace('.epub', '')}</span>
-              <span style={{ color: c.sub, fontSize: '0.76rem' }}>▶ Đọc</span>
+          {libraryLoading && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Đang tải thư viện...</p>}
+          {!libraryLoading && folderTree && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <div style={{ fontSize: '0.86rem', fontWeight: 600, color: c.sub }}>📁 Thư viện</div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button style={btn} onClick={() => fetchFiles()}>Tải lại</button>
+                </div>
+              </div>
+              {renderGridLibrary()}
             </div>
-          ))}
+          )}
+          {!libraryLoading && !folderTree && !loading && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Không tìm thấy file .epub trong thư mục epub</p>}
         </div>
       )}
 
