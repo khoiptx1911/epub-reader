@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { useGoogleLogin } from '@react-oauth/google';
 import ePub from 'epubjs';
 import localforage from 'localforage';
 import { CLIENT_ID } from './config';
@@ -43,8 +42,8 @@ function App() {
   useEffect(() => { isDarkRef.current  = isDark;   }, [isDark]);
   useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
 
-  /* ─── Google login & silent refresh (GIS token client) ─── */
-  const tokenClientRef = useRef(null);
+  /* ─── Google login & silent refresh (GIS Authorization Code Flow + server) ─── */
+  const codeClientRef = useRef(null);
   const refreshTimeoutRef = useRef(null);
 
   const syncIntervalRef = useRef(null);
@@ -71,6 +70,7 @@ function App() {
     try { await localforage.setItem(posKey(fileId), pos); } catch (err) { console.warn('savePositionLocal err', err); }
   };
 
+  // Save position to Drive (uses accessToken); on 401 attempt silent refresh via server
   const savePositionToDrive = async (fileId, pos) => {
     if (!accessToken) return;
     try {
@@ -79,8 +79,8 @@ function App() {
       const listUrl = `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name)&q=${encodeURIComponent(q)}`;
       const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!listRes.ok) {
-        if (listRes.status === 401 && tokenClientRef.current) {
-          try { tokenClientRef.current.requestAccessToken({ prompt: '' }); } catch (_) {}
+        if (listRes.status === 401) {
+          try { await silentRefresh(); } catch (_) {}
         }
         return;
       }
@@ -136,6 +136,7 @@ function App() {
     } catch (err) { console.warn('savePositionToDrive err', err); }
   };
 
+  // Load position from Drive (uses accessToken); on 401 attempt silent refresh via server
   const loadPositionFromDrive = async (fileId) => {
     if (!accessToken) return null;
     try {
@@ -144,8 +145,8 @@ function App() {
       const listUrl = `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name)&q=${encodeURIComponent(q)}`;
       const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!listRes.ok) {
-        if (listRes.status === 401 && tokenClientRef.current) {
-          try { tokenClientRef.current.requestAccessToken({ prompt: '' }); } catch (_) {}
+        if (listRes.status === 401) {
+          try { await silentRefresh(); } catch (_) {}
         }
         return null;
       }
@@ -157,8 +158,8 @@ function App() {
         if (!getRes.ok) {
           const t = await getRes.text().catch(() => null);
           console.warn('[epub] loadPositionFromDrive getRes not ok', getRes.status, t);
-          if (getRes.status === 401 && tokenClientRef.current) {
-            try { tokenClientRef.current.requestAccessToken({ prompt: '' }); } catch (_) {}
+          if (getRes.status === 401) {
+            try { await silentRefresh(); } catch (_) {}
           }
           return null;
         }
@@ -193,6 +194,30 @@ function App() {
     if (fileId) await saveCurrentPosition(fileId);
   };
 
+  // Server endpoint for code exchange and refresh
+  const TOKEN_EXCHANGE_ENDPOINT = '/api/token-exchange';
+
+  const postToServer = async (payload) => {
+    try {
+      const r = await fetch(TOKEN_EXCHANGE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw j || new Error('token-exchange failed');
+      return j;
+    } catch (err) { throw err; }
+  };
+
+  const exchangeCodeForTokens = async (code) => {
+    return await postToServer({ code, redirect_uri: 'postmessage' });
+  };
+
+  const refreshAccessTokenWithServer = async (refreshToken) => {
+    return await postToServer({ refresh_token: refreshToken });
+  };
+
   const setTokenAndSchedule = async (token, expiresInSec = 3600) => {
     setAccessToken(token);
     const expiresAt = Date.now() + expiresInSec * 1000;
@@ -202,66 +227,98 @@ function App() {
     const ms = expiresAt - Date.now() - 60 * 1000;
     if (ms <= 0) {
       // immediate attempt
-      if (tokenClientRef.current) tokenClientRef.current.requestAccessToken({ prompt: '' });
+      silentRefresh();
     } else {
       refreshTimeoutRef.current = setTimeout(() => {
-        if (tokenClientRef.current) tokenClientRef.current.requestAccessToken({ prompt: '' });
+        silentRefresh();
       }, ms);
     }
   };
 
-  const silentRefresh = () => {
-    if (!tokenClientRef.current) return;
-    try { tokenClientRef.current.requestAccessToken({ prompt: '' }); }
-    catch (err) { console.warn('silent refresh failed', err); }
+  const silentRefresh = async () => {
+    try {
+      const rt = await localforage.getItem('refreshToken');
+      if (!rt) {
+        console.debug('[epub] silentRefresh: no refresh token');
+        return;
+      }
+      const data = await refreshAccessTokenWithServer(rt);
+      if (data && data.access_token) {
+        try { await localforage.setItem('accessToken', { token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 }); } catch (_) {}
+        if (data.refresh_token) {
+          try { await localforage.setItem('refreshToken', data.refresh_token); } catch (_) {}
+        }
+        setAccessToken(data.access_token);
+        // schedule next
+        if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+        const ms = (data.expires_in || 3600) * 1000 - 60 * 1000;
+        refreshTimeoutRef.current = setTimeout(() => { silentRefresh(); }, ms > 0 ? ms : 0);
+      } else {
+        console.warn('[epub] silentRefresh failed', data);
+        try { await localforage.removeItem('accessToken'); } catch (_) {}
+        try { await localforage.removeItem('refreshToken'); } catch (_) {}
+        setAccessToken(null);
+      }
+    } catch (err) { console.warn('silentRefresh err', err); }
   };
 
-  const initTokenClient = () => {
+  const initCodeClient = () => {
     try {
       if (window.google?.accounts?.oauth2) {
-        tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+        codeClientRef.current = window.google.accounts.oauth2.initCodeClient({
           client_id: CLIENT_ID,
           scope: 'https://www.googleapis.com/auth/drive.appdata',
-          callback: (resp) => {
-            if (resp && resp.access_token) {
-              setTokenAndSchedule(resp.access_token, resp.expires_in || 3600);
+          ux_mode: 'popup',
+          callback: async (resp) => {
+            if (resp && resp.code) {
+              try {
+                const data = await exchangeCodeForTokens(resp.code);
+                if (data && data.access_token) {
+                  if (data.refresh_token) {
+                    try { await localforage.setItem('refreshToken', data.refresh_token); } catch (_) {}
+                  }
+                  await setTokenAndSchedule(data.access_token, data.expires_in || 3600);
+                } else {
+                  console.warn('code exchange response', data);
+                }
+              } catch (err) { console.warn('exchange err', err); }
             } else {
-              console.warn('token client callback', resp);
+              console.warn('code client callback', resp);
             }
           },
         });
       }
-    } catch (err) { console.warn('initTokenClient err', err); }
+    } catch (err) { console.warn('initCodeClient err', err); }
   };
 
-  // Interactive login using GIS token client to ensure drive.appdata scope is granted
+  // Interactive login using GIS code client to ensure drive.appdata scope is granted
   const login = async () => {
     try {
-      if (!tokenClientRef.current) {
+      if (!codeClientRef.current) {
         // try to init if script loaded
-        if (window.google?.accounts?.oauth2) initTokenClient();
-        // wait briefly for tokenClient to become available
+        if (window.google?.accounts?.oauth2) initCodeClient();
+        // wait briefly for codeClient to become available
         let waited = 0;
-        while (!tokenClientRef.current && waited < 3000) { await new Promise(r => setTimeout(r, 100)); waited += 100; }
-        if (!tokenClientRef.current) {
-          console.warn('login: token client not ready');
+        while (!codeClientRef.current && waited < 3000) { await new Promise(r => setTimeout(r, 100)); waited += 100; }
+        if (!codeClientRef.current) {
+          console.warn('login: code client not ready');
           return;
         }
       }
-      // Prompt for consent to ensure scopes are granted
-      tokenClientRef.current.requestAccessToken({ prompt: 'consent' });
+      // Prompt for consent to ensure refresh token is issued
+      try { codeClientRef.current.requestCode({ prompt: 'consent', access_type: 'offline' }); } catch (e) { codeClientRef.current.requestCode({ prompt: 'consent' }); }
     } catch (err) {
       console.warn('login err', err);
     }
   };
 
-  // Load GIS script and init token client
+  // Load GIS script and init code client
   useEffect(() => {
-    if (window.google?.accounts?.oauth2) { initTokenClient(); return; }
+    if (window.google?.accounts?.oauth2) { initCodeClient(); return; }
     const s = document.createElement('script');
     s.src = 'https://accounts.google.com/gsi/client';
     s.async = true; s.defer = true;
-    s.onload = () => initTokenClient();
+    s.onload = () => initCodeClient();
     document.head.appendChild(s);
     return () => {};
   }, []);
@@ -273,14 +330,12 @@ function App() {
         const s = await localforage.getItem('accessToken');
         if (s && s.token && s.expiresAt && s.expiresAt > Date.now()) {
           setAccessToken(s.token);
-          // schedule refresh
+          // schedule refresh using server-side silent refresh
           const ms = s.expiresAt - Date.now() - 60 * 1000;
           if (ms <= 0) {
-            if (tokenClientRef.current) tokenClientRef.current.requestAccessToken({ prompt: '' });
+            silentRefresh();
           } else {
-            refreshTimeoutRef.current = setTimeout(() => {
-              if (tokenClientRef.current) tokenClientRef.current.requestAccessToken({ prompt: '' });
-            }, ms);
+            refreshTimeoutRef.current = setTimeout(() => { silentRefresh(); }, ms);
           }
         } else if (s) {
           await localforage.removeItem('accessToken');
