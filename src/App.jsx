@@ -1130,8 +1130,8 @@ function App() {
           <div style={{ color: c.accent2, marginBottom: '12px', fontSize: '0.78rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1.2px' }}>
             Sách của bạn
           </div>
-          {loading && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Đang tải...</p>}
-          {!loading && files.length === 0 && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Không tìm thấy file .epub trong thư mục data/epub</p>}
+          {libraryLoading && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Đang tải...</p>}
+          {!libraryLoading && files.length === 0 && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Không tìm thấy file .epub trong thư mục data/epub</p>}
           {libraryLoading && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Đang tải thư viện...</p>}
           {!libraryLoading && folderTree && (
             <div>
@@ -1144,7 +1144,7 @@ function App() {
               {renderGridLibrary()}
             </div>
           )}
-          {!libraryLoading && !folderTree && !loading && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Không tìm thấy file .epub trong thư mục epub</p>}
+          {!libraryLoading && !folderTree && <p style={{ color: c.sub, fontSize: '0.88rem' }}>Không tìm thấy file .epub trong thư mục epub</p>}
         </div>
       )}
 
