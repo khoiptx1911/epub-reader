@@ -18,7 +18,7 @@ document.head.appendChild(globalStyle);
 function App() {
   const [accessToken, setAccessToken] = useState(null);
   const [files, setFiles]             = useState([]);
-  const [loading, setLoading]         = useState(false);
+  const [bookLoading, setBookLoading] = useState(false);
   const [currentBook, setCurrentBook] = useState(null);
   const [fontSize, setFontSize]       = useState(100);
   const [isDark, setIsDark]           = useState(true);
@@ -348,7 +348,7 @@ function App() {
   const fetchFiles = async () => {
     if (!accessToken) return;
     setLibraryLoading(true);
-    setLoading(true);
+
     try {
       const h = { headers: { Authorization: `Bearer ${accessToken}` } };
       // find data/epub folder (same logic as before)
@@ -403,7 +403,6 @@ function App() {
       setFiles(allFiles || []);
     } catch (err) { console.error(err); }
     setLibraryLoading(false);
-    setLoading(false);
   };
 
   useEffect(() => { if (accessToken) fetchFiles(); }, [accessToken]);
@@ -750,7 +749,7 @@ function App() {
 
   /* ─── Mở sách ─── */
   const openBook = async (fileId) => {
-    setLoading(true);
+    setBookLoading(true);
     // stop previous sync if any
     try { if (currentBook && currentBook !== fileId) await stopPositionSync(currentBook); } catch (_) {}
     setCurrentBook(fileId);
@@ -896,7 +895,7 @@ function App() {
       console.error(err);
       alert('Lỗi mở sách: ' + err.message);
     }
-    setLoading(false);
+    setBookLoading(false);
   };
 
   const goBack = async () => {
@@ -1163,7 +1162,7 @@ function App() {
             minHeight: 0,
           }}
         >
-          {loading && (
+          {bookLoading  && (
             <div style={{ textAlign: 'center', padding: '80px 0', color: c.sub }}>
               <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📖</div>
               <div style={{ fontSize: '0.86rem' }}>Đang tải nội dung...</div>
