@@ -1,19 +1,32 @@
-// Vercel Serverless Function: exchanges authorization code for tokens and refreshes access tokens
-// Requires environment variables: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (set in Vercel dashboard)
+// api/token-exchange.js
+// Vercel Serverless Function: trao đổi auth code và refresh access token
+// Sử dụng ES Modules (chạy tốt với "type": "module")
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
+  // Thêm cấu hình CORS để frontend giao tiếp dễ dàng
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'method_not_allowed' });
   }
 
   const body = req.body || {};
-  const client_id = process.env.GOOGLE_CLIENT_ID || process.env.CLIENT_ID;
-  const client_secret = process.env.GOOGLE_CLIENT_SECRET || process.env.CLIENT_SECRET;
+  const client_id = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+  const client_secret = process.env.GOOGLE_CLIENT_SECRET;
 
   if (!client_id || !client_secret) {
     console.error('Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET');
-    return res.status(500).json({ error: 'server_misconfigured', error_description: 'Missing Google client credentials on server' });
+    return res.status(500).json({ 
+      error: 'server_misconfigured', 
+      error_description: 'Missing Google client credentials on server' 
+    });
   }
 
   try {
@@ -28,7 +41,7 @@ module.exports = async (req, res) => {
     };
 
     if (body.code) {
-      // Exchange authorization code for tokens (one-time)
+      // Đổi mã code lấy tokens lần đầu
       const params = new URLSearchParams();
       params.append('code', body.code);
       params.append('client_id', client_id);
@@ -42,7 +55,7 @@ module.exports = async (req, res) => {
     }
 
     if (body.refresh_token) {
-      // Use refresh_token to obtain a new access token
+      // Sử dụng refresh_token để gia hạn access_token mới
       const params = new URLSearchParams();
       params.append('refresh_token', body.refresh_token);
       params.append('client_id', client_id);
@@ -54,9 +67,12 @@ module.exports = async (req, res) => {
       return res.status(200).json(json);
     }
 
-    return res.status(400).json({ error: 'invalid_request', error_description: 'Missing code or refresh_token in request' });
+    return res.status(400).json({ 
+      error: 'invalid_request', 
+      error_description: 'Missing code or refresh_token in request' 
+    });
   } catch (err) {
     console.error('token-exchange error', err);
     return res.status(500).json({ error: 'server_error', error_description: String(err) });
   }
-};
+}
